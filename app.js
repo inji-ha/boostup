@@ -1,60 +1,61 @@
-/**
- * 한빛증권 데모 — 시세 / 매수·매도 폼 / AI 요약 / 음성 화면 이동
- */
-
 const STORAGE_KEY = "stock-app-watchlist";
-const AUTH_KEY = "stock-app-auth";
-const DEFAULT_SYMBOLS = ["005930.KS", "000660.KS", "035420.KS", "035720.KS", "AAPL"];
+const SESSION_KEY = "stock-app-session";
+const DEFAULT_SYMBOLS = ["005930.KS", "000660.KS", "035420.KS", "AAPL"];
 
-const TITLES = {
-  home: "시세",
-  buy: "매수",
-  sell: "매도",
-  ai: "AI 인사이트",
-};
-
-/** 음성 → 화면 (한국어 위주) */
-const VOICE_ROUTES = [
-  { id: "home", keys: ["시세", "현재가", "종목", "홈", "메인", "차트", "호가", "시장"] },
-  { id: "buy", keys: ["매수", "사줘", "살래", "구매", "살게", "담아"] },
-  { id: "sell", keys: ["매도", "팔아", "팔래", "매각", "팔게", "정리"] },
-  { id: "ai", keys: ["ai", "에이아이", "인공지능", "분석", "인사이트", "요약", "코멘트"] },
+const RANK_ROWS = [
+  { symbol: "005930.KS", label: "삼성전자" },
+  { symbol: "000660.KS", label: "SK하이닉스" },
+  { symbol: "035420.KS", label: "NAVER" },
+  { symbol: "005380.KS", label: "현대차" },
+  { symbol: "051910.KS", label: "LG화학" },
 ];
 
 const els = {
   viewLogin: document.getElementById("view-login"),
-  appShell: document.getElementById("appShell"),
+  mainShell: document.getElementById("mainShell"),
   loginForm: document.getElementById("loginForm"),
-  loginId: document.getElementById("loginId"),
-  btnLogout: document.getElementById("btnLogout"),
-  screenTitle: document.getElementById("screenTitle"),
-  userGreeting: document.getElementById("userGreeting"),
-  views: {
-    home: document.getElementById("view-home"),
-    buy: document.getElementById("view-buy"),
-    sell: document.getElementById("view-sell"),
-    ai: document.getElementById("view-ai"),
-  },
-  tabs: document.querySelectorAll(".tab[data-go]"),
   watchlist: document.getElementById("watchlist"),
+  rankList: document.getElementById("rankList"),
   status: document.getElementById("status"),
-  form: document.getElementById("addForm"),
-  input: document.getElementById("symbolInput"),
+  symbolInput: document.getElementById("symbolInput"),
+  btnAddSymbol: document.getElementById("btnAddSymbol"),
+  userChip: document.getElementById("userChip"),
+  profileName: document.getElementById("profileName"),
+  btnLogout: document.getElementById("btnLogout"),
   buyForm: document.getElementById("buyForm"),
   sellForm: document.getElementById("sellForm"),
-  buyLimitWrap: document.getElementById("buyLimitWrap"),
-  sellLimitWrap: document.getElementById("sellLimitWrap"),
-  aiContent: document.getElementById("aiContent"),
-  btnAiRefresh: document.getElementById("btnAiRefresh"),
-  toast: document.getElementById("toast"),
+  buySymbol: document.getElementById("buySymbol"),
+  sellSymbol: document.getElementById("sellSymbol"),
+  buyResult: document.getElementById("buyResult"),
+  sellResult: document.getElementById("sellResult"),
+  aiSymbol: document.getElementById("aiSymbol"),
+  btnAiAnalyze: document.getElementById("btnAiAnalyze"),
+  aiOutput: document.getElementById("aiOutput"),
   btnVoice: document.getElementById("btnVoice"),
   voiceHint: document.getElementById("voiceHint"),
+  btnVoiceHint: document.getElementById("btnVoiceHint"),
+  toast: document.getElementById("toast"),
+  orderPaneBuy: document.getElementById("orderPaneBuy"),
+  orderPaneSell: document.getElementById("orderPaneSell"),
+};
+
+const panels = {
+  home: document.getElementById("view-home"),
+  watch: document.getElementById("view-watch"),
+  order: document.getElementById("view-order"),
+  balance: document.getElementById("view-balance"),
+  quick: document.getElementById("view-quick"),
+  ai: document.getElementById("view-ai"),
+  menu: document.getElementById("view-menu"),
 };
 
 let symbols = loadSymbols();
 let refreshTimer = null;
-/** @type {{ symbol: string, quote: object }[]} */
-let lastQuotes = [];
+let recognition = null;
+let listening = false;
+
+/** @type {Record<string, object>} */
+const quoteCache = {};
 
 function loadSymbols() {
   try {
@@ -72,66 +73,35 @@ function saveSymbols(list) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
 }
 
-function getAuth() {
+function loadSession() {
   try {
-    const raw = sessionStorage.getItem(AUTH_KEY);
+    const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     const o = JSON.parse(raw);
-    if (o && typeof o.user === "string") return o;
+    if (o && typeof o.name === "string") return o;
   } catch {
     /* ignore */
   }
   return null;
 }
 
-function setAuth(user) {
-  sessionStorage.setItem(AUTH_KEY, JSON.stringify({ user }));
+function saveSession(name) {
+  localStorage.setItem(SESSION_KEY, JSON.stringify({ name, at: Date.now() }));
 }
 
-function clearAuth() {
-  sessionStorage.removeItem(AUTH_KEY);
+function clearSession() {
+  localStorage.removeItem(SESSION_KEY);
 }
 
 function showToast(msg, ms = 2600) {
   els.toast.textContent = msg;
-  els.toast.hidden = false;
+  els.toast.classList.remove("hidden");
+  els.toast.classList.add("show");
   clearTimeout(showToast._t);
   showToast._t = setTimeout(() => {
-    els.toast.hidden = true;
+    els.toast.classList.remove("show");
+    els.toast.classList.add("hidden");
   }, ms);
-}
-
-function navigate(viewId, { fromVoice = false } = {}) {
-  if (!getAuth() && viewId !== "login") return;
-  const ids = ["home", "buy", "sell", "ai"];
-  if (!ids.includes(viewId)) return;
-
-  for (const id of ids) {
-    const el = els.views[id];
-    if (!el) continue;
-    el.hidden = id !== viewId;
-  }
-  els.screenTitle.textContent = TITLES[viewId] || "";
-  els.tabs.forEach((tab) => {
-    const go = tab.getAttribute("data-go");
-    tab.setAttribute("aria-current", go === viewId ? "page" : "false");
-  });
-  if (viewId === "ai") renderAiInsight();
-  if (fromVoice) showToast(`「${TITLES[viewId]}」화면으로 이동했습니다.`);
-}
-
-function applyAuthUi() {
-  const auth = getAuth();
-  if (auth) {
-    els.viewLogin.hidden = true;
-    els.appShell.hidden = false;
-    els.userGreeting.textContent = `${auth.user}님`;
-    navigate("home");
-  } else {
-    els.viewLogin.hidden = false;
-    els.appShell.hidden = true;
-    els.userGreeting.textContent = "";
-  }
 }
 
 function setStatus(msg, isError = false) {
@@ -147,9 +117,7 @@ async function fetchQuote(symbol) {
 }
 
 async function fetchHistory(symbol) {
-  const r = await fetch(
-    `/api/history?symbol=${encodeURIComponent(symbol)}&range=1mo&interval=1d`
-  );
+  const r = await fetch(`/api/history?symbol=${encodeURIComponent(symbol)}&range=1mo&interval=1d`);
   const data = await r.json();
   if (!r.ok) throw new Error(data.error || r.statusText);
   return data;
@@ -243,10 +211,11 @@ function renderCard(symbol, quote, historyPoints) {
   li.querySelector(".card-remove").addEventListener("click", () => {
     symbols = symbols.filter((s) => s !== symbol);
     saveSymbols(symbols);
+    delete quoteCache[symbol];
+    syncSelects();
     li.remove();
-    lastQuotes = lastQuotes.filter((x) => x.symbol !== symbol);
     if (!symbols.length) setStatus("관심 종목이 없습니다. 위에서 심볼을 추가하세요.");
-    renderAiInsight();
+    renderRankList();
   });
 
   return li;
@@ -256,308 +225,483 @@ async function refreshAll() {
   els.watchlist.innerHTML = "";
   if (!symbols.length) {
     setStatus("관심 종목이 없습니다. 위에서 심볼을 추가하세요.");
-    lastQuotes = [];
-    renderAiInsight();
+    renderRankList();
     return;
   }
   setStatus("불러오는 중…");
   const frag = document.createDocumentFragment();
   let errors = 0;
-  const collected = [];
 
   for (const sym of symbols) {
     try {
       const [quote, hist] = await Promise.all([fetchQuote(sym), fetchHistory(sym)]);
+      quoteCache[sym] = quote;
       const points = hist.points || [];
-      collected.push({ symbol: sym, quote });
       frag.appendChild(renderCard(sym, quote, points));
     } catch (e) {
       errors += 1;
+      delete quoteCache[sym];
       const li = document.createElement("li");
       li.className = "card";
-      li.innerHTML = `<p class="card-name">${sym}</p><p class="hint" style="margin:0;color:var(--down)">${e.message || "오류"}</p>`;
+      li.innerHTML = `<p class="card-name">${sym}</p><p class="hint-text" style="margin:0;color:var(--down)">${e.message || "오류"}</p>`;
       frag.appendChild(li);
     }
   }
   els.watchlist.appendChild(frag);
-  lastQuotes = collected;
-  const t = new Date().toLocaleTimeString("ko-KR", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  const t = new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   if (errors === symbols.length) {
-    setStatus(`모든 요청 실패 (${t}). 서버(python server.py)를 켜 주세요.`, true);
+    setStatus(`모든 요청 실패 (${t}). 서버(python server.py)가 켜져 있는지 확인하세요.`, true);
   } else if (errors) {
     setStatus(`일부 종목을 불러오지 못했습니다. ${t}`);
   } else {
     setStatus(`마지막 갱신: ${t}`);
   }
-  renderAiInsight();
+  syncSelects();
+  renderRankList();
 }
 
 function scheduleRefresh() {
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = setInterval(() => {
-    if (getAuth() && !els.views.home.hidden) refreshAll();
+    refreshAll();
+    refreshHomeIndices();
+    renderRankList();
   }, 60_000);
 }
 
-/** 규칙 기반 AI 스타일 요약 (외부 API 없음) */
-function renderAiInsight() {
-  if (els.views.ai.hidden) return;
-  if (!lastQuotes.length) {
-    els.aiContent.innerHTML = `<p class="muted">시세 탭에서 종목을 불러오면 요약이 생성됩니다.</p>`;
-    return;
-  }
-
-  const ups = lastQuotes.filter((x) => (x.quote.change ?? 0) > 0);
-  const downs = lastQuotes.filter((x) => (x.quote.change ?? 0) < 0);
-  const flat = lastQuotes.filter((x) => (x.quote.change ?? 0) === 0 || x.quote.change == null);
-
-  const top = [...lastQuotes].sort(
-    (a, b) => (b.quote.changePct ?? 0) - (a.quote.changePct ?? 0)
-  )[0];
-  const bottom = [...lastQuotes].sort(
-    (a, b) => (a.quote.changePct ?? 0) - (b.quote.changePct ?? 0)
-  )[0];
-
-  const mood =
-    ups.length > downs.length ? "순조로운 편" : downs.length > ups.length ? "조정 국면에 가깝게" : "혼조세에 가깝게";
-
-  const blocks = [];
-
-  blocks.push(`
-    <div class="ai-block">
-      <h3>오늘의 톤</h3>
-      <p>관심 종목 ${lastQuotes.length}개 중 상승 ${ups.length} · 하락 ${downs.length} · 보합/데이터 부족 ${flat.length}개로, 전체적으로 <strong>${mood}</strong> 보입니다. 실제 투자 결정은 뉴스·재무·리스크를 함께 보세요.</p>
-    </div>
-  `);
-
-  if (top?.quote?.changePct != null) {
-    blocks.push(`
-      <div class="ai-block">
-        <h3>상대적으로 강한 종목</h3>
-        <p><strong>${top.quote.name || top.symbol}</strong>은(는) 전일 대비 <strong>${top.quote.changePct > 0 ? "+" : ""}${top.quote.changePct.toFixed(2)}%</strong>입니다. 단기 변동에 과도하게 반응하지 않도록 포지션 비중을 점검해 보세요.</p>
-      </div>
-    `);
-  }
-
-  if (bottom && bottom !== top && bottom?.quote?.changePct != null) {
-    blocks.push(`
-      <div class="ai-block">
-        <h3>주목이 필요한 종목</h3>
-        <p><strong>${bottom.quote.name || bottom.symbol}</strong>은(는) <strong>${bottom.quote.changePct.toFixed(2)}%</strong> 흐름입니다. 손절·분할 매수 등 사전에 정한 규칙이 있는지 확인하는 것이 좋습니다.</p>
-      </div>
-    `);
-  }
-
-  blocks.push(`
-    <div class="ai-block">
-      <h3>한 줄 체크</h3>
-      <p>변동성이 큰 날일수록 거래 빈도를 줄이고, 수수료·슬리피지를 함께 고려하세요. 이 메시지는 교육용 데모이며 투자 권유가 아닙니다.</p>
-    </div>
-  `);
-
-  els.aiContent.innerHTML = blocks.join("");
+function syncSelects() {
+  const opts = symbols.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("");
+  [els.buySymbol, els.sellSymbol, els.aiSymbol].forEach((sel) => {
+    if (!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = opts || '<option value="">종목 없음</option>';
+    if (cur && symbols.includes(cur)) sel.value = cur;
+    else if (symbols[0]) sel.value = symbols[0];
+  });
 }
 
-function normalizeVoiceText(raw) {
-  return String(raw || "")
-    .toLowerCase()
-    .replace(/\s+/g, "")
-    .trim();
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/"/g, "&quot;");
 }
 
-function routeFromSpeech(transcript) {
-  const n = normalizeVoiceText(transcript);
-  if (!n) return null;
-  if (n.includes("로그아웃") || n.includes("로그아웃해") || n.includes("로그아웃하")) {
-    return "logout";
+function formatIdx(n) {
+  if (n == null || Number.isNaN(n)) return "—";
+  return Number(n).toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+async function refreshHomeIndices() {
+  const rows = [
+    { sym: "^KS11", val: "idxKospi", pct: "idxKospiPct", pt: "idxKospiPt" },
+    { sym: "^KQ11", val: "idxKosdaq", pct: "idxKosdaqPct", pt: "idxKosdaqPt" },
+  ];
+  for (const { sym, val, pct, pt } of rows) {
+    try {
+      const q = await fetchQuote(sym);
+      const elV = document.getElementById(val);
+      const elP = document.getElementById(pct);
+      const elT = document.getElementById(pt);
+      if (elV) elV.textContent = formatIdx(q.price);
+      if (elP && q.changePct != null) {
+        const up = q.changePct > 0;
+        const down = q.changePct < 0;
+        elP.textContent = `${q.changePct > 0 ? "+" : ""}${q.changePct.toFixed(2)}%`;
+        elP.className = up ? "up" : down ? "down" : "";
+      }
+      if (elT && q.change != null) {
+        elT.textContent = `${q.change > 0 ? "+" : ""}${q.change.toFixed(2)}`;
+      }
+    } catch {
+      const elV = document.getElementById(val);
+      if (elV && elV.textContent === "—") continue;
+    }
   }
-  for (const row of VOICE_ROUTES) {
-    for (const k of row.keys) {
-      const kn = normalizeVoiceText(k);
-      if (n.includes(kn)) return row.id;
+}
+
+async function renderRankList() {
+  if (!els.rankList) return;
+  els.rankList.innerHTML = "";
+  const frag = document.createDocumentFragment();
+  for (const row of RANK_ROWS) {
+    const li = document.createElement("li");
+    li.className = "rank-row";
+    try {
+      const q = await fetchQuote(row.symbol);
+      const ch = q.changePct;
+      const up = ch != null && ch > 0;
+      const down = ch != null && ch < 0;
+      const chCls = up ? "up" : down ? "down" : "";
+      const price = q.price != null ? `${Math.round(q.price).toLocaleString("ko-KR")}` : "—";
+      const pctStr = ch != null ? `${ch > 0 ? "+" : ""}${ch.toFixed(2)}%` : "—";
+      li.innerHTML = `
+        <div class="rank-logo" aria-hidden="true"></div>
+        <div class="rank-mid">
+          <p class="rank-name">${escapeHtml(q.name || row.label)}</p>
+        </div>
+        <div class="rank-price">
+          <span class="p">${price}</span>
+          <span class="ch ${chCls}">${pctStr}</span>
+        </div>
+        <button type="button" class="rank-star" aria-label="관심">☆</button>
+      `;
+    } catch {
+      li.innerHTML = `
+        <div class="rank-logo" aria-hidden="true"></div>
+        <div class="rank-mid">
+          <p class="rank-name">${escapeHtml(row.label)}</p>
+        </div>
+        <div class="rank-price">
+          <span class="p">—</span>
+          <span class="ch">—</span>
+        </div>
+        <button type="button" class="rank-star" aria-label="관심">☆</button>
+      `;
+    }
+    frag.appendChild(li);
+  }
+  els.rankList.appendChild(frag);
+}
+
+function setOrderTab(which) {
+  const buyOn = which === "buy";
+  document.querySelectorAll(".order-seg-btn").forEach((b) => {
+    b.classList.toggle("is-active", b.getAttribute("data-order-tab") === which);
+  });
+  if (els.orderPaneBuy) {
+    els.orderPaneBuy.classList.toggle("hidden", !buyOn);
+    els.orderPaneBuy.hidden = !buyOn;
+  }
+  if (els.orderPaneSell) {
+    els.orderPaneSell.classList.toggle("hidden", buyOn);
+    els.orderPaneSell.hidden = buyOn;
+  }
+}
+
+function navigateTo(view) {
+  const keys = Object.keys(panels);
+  if (!keys.includes(view)) return;
+  keys.forEach((k) => {
+    const el = panels[k];
+    const on = k === view;
+    el.classList.toggle("hidden", !on);
+    el.hidden = !on;
+  });
+  document.querySelectorAll(".nav-item").forEach((btn) => {
+    const nav = btn.getAttribute("data-nav");
+    const active = nav === view;
+    btn.classList.toggle("active", active);
+    if (active) btn.setAttribute("aria-current", "page");
+    else btn.removeAttribute("aria-current");
+  });
+  if (view === "ai") runAiAnalysis();
+  if (view === "home") {
+    refreshHomeIndices();
+    renderRankList();
+  }
+  if (view === "watch") refreshAll();
+  if (view === "order") setOrderTab("buy");
+}
+
+function matchVoiceIntent(text) {
+  const t = text.toLowerCase().replace(/\s+/g, "");
+
+  if (["로그인", "로그인화면", "로그인해줘", "로그인으로", "로그인해"].some((k) => t.includes(k))) {
+    return { kind: "login" };
+  }
+  if (["로그아웃", "로그아웃해", "로그아웃해줘", "로그아웃해주세요"].some((k) => t.includes(k))) {
+    return { kind: "logout" };
+  }
+
+  const routes = [
+    { keys: ["홈", "메인", "시장"], view: "home" },
+    { keys: ["관심", "시세", "종목", "관심종목", "차트", "주가"], view: "watch" },
+    { keys: ["주문", "매수", "매도", "살게", "팔아"], view: "order" },
+    { keys: ["잔고", "평가", "자산"], view: "balance" },
+    { keys: ["퀵", "퀵메뉴"], view: "quick" },
+    { keys: ["전체", "메뉴", "마이", "프로필", "설정", "계정"], view: "menu" },
+    { keys: ["ai", "에이아이", "인공지능", "분석", "인사이트", "브리핑"], view: "ai" },
+  ];
+
+  for (const { keys, view } of routes) {
+    for (const k of keys) {
+      if (t.includes(k.toLowerCase())) return { kind: "view", view };
     }
   }
   return null;
 }
 
-function setupVoice() {
+function getSpeechRecognition() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) {
-    els.btnVoice.disabled = true;
-    els.voiceHint.textContent = "이 브라우저는 음성 인식을 지원하지 않습니다. Chrome 권장.";
+  if (!SR) return null;
+  const r = new SR();
+  r.lang = "ko-KR";
+  r.interimResults = false;
+  r.maxAlternatives = 1;
+  return r;
+}
+
+function setListening(on) {
+  listening = on;
+  els.btnVoice.classList.toggle("listening", on);
+  els.btnVoice.setAttribute("aria-pressed", on ? "true" : "false");
+  els.voiceHint.textContent = on
+    ? "듣고 있어요… 원하는 화면 이름을 말해 주세요."
+    : "마이크를 누른 뒤 “홈”, “관심”, “주문” 등으로 말해보세요.";
+}
+
+function startVoiceNavigation() {
+  if (!els.mainShell.classList.contains("hidden")) {
+    /* ok */
+  } else {
+    showToast("로그인 후 사용할 수 있어요.");
     return;
   }
 
-  const rec = new SR();
-  rec.lang = "ko-KR";
-  rec.interimResults = false;
-  rec.maxAlternatives = 1;
-  rec.continuous = false;
-
-  let listening = false;
-
-  function stopListening() {
-    listening = false;
-    els.btnVoice.setAttribute("aria-pressed", "false");
-    try {
-      rec.stop();
-    } catch {
-      /* already stopped */
-    }
-  }
-
-  rec.onresult = (ev) => {
-    const text = ev.results[0]?.[0]?.transcript ?? "";
-    els.voiceHint.textContent = `인식: 「${text}」`;
-    const route = routeFromSpeech(text);
-    if (route === "logout") {
-      clearAuth();
-      applyAuthUi();
-      showToast("로그아웃했습니다.");
-      stopListening();
-      return;
-    }
-    if (route) {
-      navigate(route, { fromVoice: true });
-    } else {
-      showToast("인식했지만 화면을 찾지 못했습니다. 시세·매수·매도·AI를 말해 보세요.");
-    }
-    stopListening();
-  };
-
-  rec.onerror = (ev) => {
-    stopListening();
-    if (ev.error === "not-allowed") {
-      els.voiceHint.textContent = "마이크 권한을 허용해 주세요.";
-    } else if (ev.error === "no-speech") {
-      els.voiceHint.textContent = "음성이 감지되지 않았습니다. 다시 눌러 말해 주세요.";
-    } else {
-      els.voiceHint.textContent = `음성 오류: ${ev.error}`;
-    }
-  };
-
-  rec.onend = () => {
-    if (listening) {
-      listening = false;
-      els.btnVoice.setAttribute("aria-pressed", "false");
-    }
-  };
-
-  els.btnVoice.addEventListener("click", () => {
-    if (!getAuth()) {
-      showToast("로그인 후 사용할 수 있습니다.");
-      return;
-    }
-    if (listening) {
-      stopListening();
-      els.voiceHint.textContent = "음성 입력을 취소했습니다.";
-      return;
-    }
-    listening = true;
-    els.btnVoice.setAttribute("aria-pressed", "true");
-    els.voiceHint.textContent = "듣고 있습니다… 화면 이름을 말하세요.";
-    try {
-      rec.start();
-    } catch {
-      listening = false;
-      els.btnVoice.setAttribute("aria-pressed", "false");
-      els.voiceHint.textContent = "다시 눌러 시작해 주세요.";
-    }
-  });
-}
-
-/* 이벤트 */
-els.loginForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const id = els.loginId.value.trim() || "고객";
-  setAuth(id);
-  applyAuthUi();
-  refreshAll();
-  scheduleRefresh();
-  showToast(`환영합니다, ${id}님`);
-});
-
-els.btnLogout.addEventListener("click", () => {
-  clearAuth();
-  applyAuthUi();
-  if (refreshTimer) clearInterval(refreshTimer);
-});
-
-els.tabs.forEach((tab) => {
-  tab.addEventListener("click", () => {
-    const go = tab.getAttribute("data-go");
-    if (go) navigate(go);
-  });
-});
-
-els.form.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const raw = els.input.value.trim().toUpperCase();
-  if (!raw) return;
-  if (symbols.includes(raw)) {
-    setStatus("이미 목록에 있습니다.");
-    els.input.value = "";
+  recognition = recognition || getSpeechRecognition();
+  if (!recognition) {
+    showToast("이 브라우저는 음성 인식을 지원하지 않습니다. Chrome을 권장합니다.");
     return;
   }
-  symbols.push(raw);
-  saveSymbols(symbols);
-  els.input.value = "";
-  refreshAll();
-});
 
-function toggleLimit(wrap, typeRadios, name) {
-  const t = [...typeRadios].find((r) => r.checked)?.value;
-  wrap.hidden = t !== "limit";
+  if (listening) {
+    try {
+      recognition.abort();
+    } catch {
+      /* ignore */
+    }
+    setListening(false);
+    return;
+  }
+
+  recognition.onstart = () => setListening(true);
+  recognition.onend = () => setListening(false);
+  recognition.onerror = (ev) => {
+    setListening(false);
+    if (ev.error === "not-allowed") showToast("마이크 권한을 허용해 주세요.");
+    else if (ev.error === "no-speech") showToast("음성이 감지되지 않았어요. 다시 눌러 주세요.");
+  };
+  recognition.onresult = (ev) => {
+    const said = ev.results[0]?.[0]?.transcript?.trim() || "";
+    const intent = matchVoiceIntent(said);
+    if (intent?.kind === "login") {
+      clearSession();
+      els.viewLogin.classList.remove("hidden");
+      els.mainShell.classList.add("hidden");
+      els.mainShell.hidden = true;
+      if (refreshTimer) clearInterval(refreshTimer);
+      showToast(`「${said}」 → 로그인 화면`);
+    } else if (intent?.kind === "logout") {
+      clearSession();
+      els.viewLogin.classList.remove("hidden");
+      els.mainShell.classList.add("hidden");
+      els.mainShell.hidden = true;
+      if (refreshTimer) clearInterval(refreshTimer);
+      showToast("로그아웃했어요.");
+    } else if (intent?.kind === "view" && intent.view) {
+      navigateTo(intent.view);
+      showToast(`「${said}」 → ${labelView(intent.view)}`);
+    } else {
+      showToast(`인식: ${said || "(빈 음성)"} — 키워드를 찾지 못했어요.`);
+    }
+    try {
+      recognition.stop();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  try {
+    recognition.start();
+  } catch {
+    showToast("음성을 시작할 수 없습니다. 잠시 후 다시 눌러 주세요.");
+    setListening(false);
+  }
 }
 
-els.buyForm.querySelectorAll('input[name="buyType"]').forEach((r) => {
-  r.addEventListener("change", () =>
-    toggleLimit(els.buyLimitWrap, els.buyForm.querySelectorAll('input[name="buyType"]'))
-  );
-});
-els.sellForm.querySelectorAll('input[name="sellType"]').forEach((r) => {
-  r.addEventListener("change", () =>
-    toggleLimit(els.sellLimitWrap, els.sellForm.querySelectorAll('input[name="sellType"]'))
-  );
-});
+function labelView(v) {
+  const m = {
+    home: "홈",
+    watch: "관심",
+    order: "주문",
+    balance: "잔고",
+    quick: "퀵메뉴",
+    menu: "전체",
+    ai: "AI",
+  };
+  return m[v] || v;
+}
 
-els.buyForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const fd = new FormData(els.buyForm);
-  const sym = String(fd.get("symbol") || "").trim();
-  const qty = fd.get("qty");
-  const type = fd.get("buyType");
-  showToast(`[데모] ${sym} ${qty}주 ${type === "limit" ? "지정가" : "시장가"} 매수 주문이 접수되었습니다.`);
-  els.buyForm.reset();
-  els.buyForm.querySelector('input[name="buyType"][value="market"]').checked = true;
-  els.buyLimitWrap.hidden = true;
-});
+function buildAiHtml(quote) {
+  const name = quote.name || quote.symbol;
+  const price = formatPrice(quote.price, quote.currency);
+  const ch = quote.change;
+  const pct = quote.changePct;
+  let tone = "보합권";
+  if (ch != null) {
+    if (ch > 0) tone = "상승 모멘텀";
+    else if (ch < 0) tone = "조정 흐름";
+  }
+  const volHint =
+    pct != null && Math.abs(pct) >= 3
+      ? "당일 변동폭이 큽니다. 체결 분할·손절 기준을 미리 정리해 두면 좋습니다."
+      : "변동폭이 비교적 완만한 편입니다. 뉴스·실적 일정과 함께 보는 것을 권합니다.";
 
-els.sellForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const fd = new FormData(els.sellForm);
-  const sym = String(fd.get("symbol") || "").trim();
-  const qty = fd.get("qty");
-  const type = fd.get("sellType");
-  showToast(`[데모] ${sym} ${qty}주 ${type === "limit" ? "지정가" : "시장가"} 매도 주문이 접수되었습니다.`);
-  els.sellForm.reset();
-  els.sellForm.querySelector('input[name="sellType"][value="market"]').checked = true;
-  els.sellLimitWrap.hidden = true;
-});
+  const others = symbols.filter((s) => s !== quote.symbol && quoteCache[s]);
+  let basket = "";
+  if (others.length) {
+    const avg =
+      others.reduce((acc, s) => acc + (quoteCache[s].changePct ?? 0), 0) / others.length;
+    basket = `<p class="muted" style="margin-top:0.75rem">관심 바구니 힌트: 다른 관심 종목 평균 등락은 약 ${avg >= 0 ? "+" : ""}${avg.toFixed(2)}% 수준으로 추정됩니다 (캐시 기준).</p>`;
+  }
 
-els.btnAiRefresh.addEventListener("click", () => {
-  renderAiInsight();
-  showToast("AI 요약을 갱신했습니다.");
-});
+  return `
+    <h3>${escapeHtml(name)} 요약</h3>
+    <p><strong>현재가</strong> ${escapeHtml(price)} · 전일 대비 변화는 수치 기준으로 표시됩니다.</p>
+    <ul>
+      <li>단기 국면: <strong>${tone}</strong>${pct != null ? ` (약 ${pct > 0 ? "+" : ""}${pct.toFixed(2)}%)` : ""}.</li>
+      <li>${volHint}</li>
+      <li>리스크: 본 분석은 데모용 규칙 기반이며 투자 권유가 아닙니다.</li>
+    </ul>
+    ${basket}
+    <span class="tag">AI 데모 · 규칙 기반</span>
+  `;
+}
 
-/* 초기화 */
-applyAuthUi();
-setupVoice();
-if (getAuth()) {
+async function runAiAnalysis() {
+  const sym = els.aiSymbol.value;
+  if (!sym) {
+    els.aiOutput.innerHTML = "<p>관심 종목을 먼저 추가해 주세요.</p>";
+    return;
+  }
+  els.aiOutput.innerHTML = "<p>분석 중…</p>";
+  try {
+    const quote = await fetchQuote(sym);
+    els.aiOutput.innerHTML = buildAiHtml(quote);
+  } catch (e) {
+    els.aiOutput.innerHTML = `<p class="status-line error">불러오기 실패: ${escapeHtml(e.message)}</p>`;
+  }
+}
+
+function bindUi() {
+  els.loginForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const id = document.getElementById("loginId").value.trim();
+    if (!id) return;
+    const display = id.length > 8 ? `${id.slice(0, 6)}…` : id;
+    const name = `${display}님`;
+    saveSession(name);
+    applySession(name);
+  });
+
+  els.btnLogout.addEventListener("click", () => {
+    clearSession();
+    els.viewLogin.classList.remove("hidden");
+    els.mainShell.classList.add("hidden");
+    els.mainShell.hidden = true;
+  });
+
+  els.btnAddSymbol.addEventListener("click", () => {
+    const raw = els.symbolInput.value.trim().toUpperCase();
+    if (!raw) return;
+    if (symbols.includes(raw)) {
+      setStatus("이미 목록에 있습니다.");
+      els.symbolInput.value = "";
+      return;
+    }
+    symbols.push(raw);
+    saveSymbols(symbols);
+    els.symbolInput.value = "";
+    refreshAll();
+  });
+
+  els.symbolInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      els.btnAddSymbol.click();
+    }
+  });
+
+  document.querySelectorAll(".nav-item").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const v = btn.getAttribute("data-nav");
+      if (v) navigateTo(v);
+    });
+  });
+
+  document.querySelectorAll(".order-seg-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tab = btn.getAttribute("data-order-tab");
+      if (tab === "buy" || tab === "sell") setOrderTab(tab);
+    });
+  });
+
+  document.querySelectorAll(".quick-tile[data-go], .menu-row[data-go]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const go = el.getAttribute("data-go");
+      if (go) navigateTo(go);
+    });
+  });
+
+  const watchTabBtn = document.querySelector(".sub-tab--icon");
+  if (watchTabBtn) {
+    watchTabBtn.addEventListener("click", () => navigateTo("watch"));
+  }
+
+  els.buyForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const sym = els.buySymbol.value;
+    const qty = document.getElementById("buyQty").value;
+    const type = document.getElementById("buyType").value;
+    const price = document.getElementById("buyPrice").value;
+    els.buyResult.textContent = `[데모] ${sym} 매수 ${qty}주 (${type === "market" ? "시장가" : "지정가"}${
+      price ? ` ${Number(price).toLocaleString("ko-KR")}원` : ""
+    }) 접수 시뮬레이션 완료. 실제 주문은 이루어지지 않습니다.`;
+  });
+
+  els.sellForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const sym = els.sellSymbol.value;
+    const qty = document.getElementById("sellQty").value;
+    const type = document.getElementById("sellType").value;
+    const price = document.getElementById("sellPrice").value;
+    els.sellResult.textContent = `[데모] ${sym} 매도 ${qty}주 (${type === "market" ? "시장가" : "지정가"}${
+      price ? ` ${Number(price).toLocaleString("ko-KR")}원` : ""
+    }) 접수 시뮬레이션 완료. 실제 주문은 이루어지지 않습니다.`;
+  });
+
+  els.btnAiAnalyze.addEventListener("click", () => runAiAnalysis());
+
+  els.btnVoice.addEventListener("click", () => startVoiceNavigation());
+
+  els.btnVoiceHint.addEventListener("click", () => {
+    showToast("하단 마이크를 누른 뒤: 홈·관심·주문·잔고·퀵메뉴·전체·AI 등으로 말하면 해당 화면으로 이동합니다.", 4000);
+  });
+}
+
+function applySession(name) {
+  els.userChip.textContent = name;
+  if (els.profileName) els.profileName.textContent = name;
+  els.viewLogin.classList.add("hidden");
+  els.mainShell.classList.remove("hidden");
+  els.mainShell.hidden = false;
+  navigateTo("home");
   refreshAll();
+  refreshHomeIndices();
+  renderRankList();
   scheduleRefresh();
 }
+
+function init() {
+  bindUi();
+  const sess = loadSession();
+  if (sess?.name) applySession(sess.name);
+  else {
+    els.viewLogin.classList.remove("hidden");
+    els.mainShell.classList.add("hidden");
+    els.mainShell.hidden = true;
+  }
+}
+
+init();
