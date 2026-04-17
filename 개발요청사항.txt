@@ -1,0 +1,116 @@
+앱명: 한화 STEPS (한화투자증권 모바일 증권앱 PoC) 프레임워크: React (JSX, Tailwind CSS)
+
+핵심 기능:
+
+홈 화면: 내 투자 자산 요약, 국내/해외 주식 리스트, 포트폴리오 라인차트, 시장종합(국내/해외/금리/환율/원자재 탭)
+
+하단메뉴: 홈 관심 오렌지니 AI(기존버튼 그대로), 발견,
+
+차트 화면: 캔들 차트, 타임프레임(10분/일/주/월/년), 실시간 현재가 라인, 매수/매도 팝업
+
+AI 비서 "오렌지니": 음성인식(STT), 인텐트 분류, Slot-filling, 동음이의어 확인, 생체인증 팝업
+
+국내주식 종목 (5개)
+
+종목코드종목명exchange003530한화투자증권KRX005930삼성전자KRX000660SK하이닉스KRX000270기아KRXAAPL애플NASDAQ (해외)
+
+시세 API
+
+서비스: https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService
+
+API Key: 9e1b88b33cce2ffc990acb3a2dcbedb7e91a34612f9cb7d75c955d7429635227
+
+엔드포인트: /quote?symbol={ticker}&exchange={exchange}&apikey={KEY}
+
+응답 필드: close(현재가), previous_close, change, percent_change
+
+갱신 주기: 60초 자동 갱신
+
+국내 티커: 003530 + exchange=KRX
+
+해외 티커: AAPL + exchange=NASDAQ
+
+가격 표기 규칙
+
+국내주식 → 원(₩) 표기만 사용 (78,400원)
+
+해외주식 → 달러($) 표기만 사용 ($211.50)
+
+홈 화면 우상단 현재가 / 평가금 버튼으로 토글
+
+현재가: 주당 가격 표시
+
+평가금: 주당 가격 × 보유 주수 표시
+
+국내/해외 모두 버튼 누를 때 즉시 반응
+
+로고 시스템
+
+LOGO_MAP 객체: base64 PNG 인라인 임베드
+
+보유 키: 003530, 005930, 000880, 000370, 088350
+
+003530 키(한화 오렌지 로고)를 한화그룹 계열사 공통으로 사용
+
+SK하이닉스/기아/애플은 외부 위키미디어 URL 폴백
+
+StockLogo 컴포넌트: logoKey → LOGO_MAP → logoUrl → 이니셜 순서 폴백
+
+base64 문자열은 반드시 80자 단위로 분할 후 + 연결 (esbuild 긴 문자열 에러 방지)
+
+
+
+디자인 시스템
+
+한화 오렌지: #F37321
+
+앱 크기: 360×800px 고정, border-radius: 24px
+
+AI 버튼: 하단 네비 중앙, 오렌지 원형 플로팅 (-top-5)
+
+상승: 빨간색(text-rose-500), 하락: 파란색(text-blue-500) — 한국 증권앱 컨벤션
+
+생체인증 팝업: 파란색(bg-blue-600)
+
+매수 버튼: 빨간색(bg-rose-500), 매도 버튼: 파란색(bg-blue-600)
+
+상단 장 현황 티커: 한국/미국/중국 정규장 상태 슬라이딩 (4초 간격)
+
+포트폴리오 라인차트: SVG 직접 렌더링, 오렌지 그라디언트, 클릭 토글
+
+스켈레톤 로딩: 시세 조회 중 Skeleton 컴포넌트 표시
+
+알림 뱃지: 빨간 점 애니메이션
+
+주요 커스텀 훅
+
+useRealTimePrice(ticker, exchange, enabled) — Twelve Data API 호출, 60초 갱신
+
+useSpeechRecognition(onResult) — Web Speech API, ko-KR
+
+코드 규칙
+
+출력 파일명: HanwhaSteps.jsx
+
+base64 로고는 const LOGO_000370 = 'data:image/png;base64,' + '...(80자)...' + '...'; 형태로 분리
+
+LOGO_MAP은 위 변수들을 참조하는 객체로 선언
+
+Yahoo Finance / allorigins 프록시 사용 금지 — 인증키: '9e1b88b33cce2ffc990acb3a2dcbedb7e91a34612f9cb7d75c955d7429635227' 만 사용
+
+type === 'domestic' 으로 국내/해외 판별 (ticker.includes('.KS') 방식 금지)
+
+한국 증권앱 UX 컨벤션 준수 (상승=빨강, 하락=파랑)
+
+아래 완성된 최신 코드를 기준으로 작업할 것
+
+[현재 완성 코드 첨부]
+
+← 여기에 현재 HanwhaSteps.jsx 파일 내용을 붙여넣으세요
+
+추가 작업 사항
+
+ID대분류 (Category)사용자 의도 (Intent)대표 발화 (Utterance Sample)키워드/엔티티 (Entity)액션 유형 (Action Type)연결 코드 (Deep Link / API)101자산/계좌배당금 조회"이번 달 배당금 얼마 들어와?"기간(이번 달), 항목(배당금)화면 이동 + 데이터 호출steps://asset/dividend102자산/계좌총 자산 확인"지금 내 계좌에 얼마 있어?"항목(총 자산, 계좌)화면 이동steps://asset/balance201국내주식종목 현재가"삼성전자 지금 얼마야?"종목명(삼성전자)실시간 데이터 팝업steps://stock/quote?code=005930202국내주식주식 매수"하이닉스 10주 사줘"종목명(SK하이닉스), 수량(10)주문 팝업 호출 (인증필요)steps://trade/buy?code=000660&qty=10301뱅킹이체"내 통장으로 50만 원 보내줘"금액(500,000), 대상(내 통장)이체 화면 이동steps://banking/transfer401혜택/정보공모주 일정"다음 주에 청약할 거 뭐 있어?"기간(다음 주), 항목(공모주)리스트 화면 이동steps://stock/ipo/list501설정/기타인증/보안"비밀번호 바꾸고 싶어"항목(비밀번호, 보안)설정 화면 이동steps://settings/security
+
+이 화면들도 만들어줘
+
